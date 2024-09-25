@@ -1,0 +1,9 @@
+[package]
+name = "minitable"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+minitable_derive = { path = "../minitable_derive" }
+slab = { workspace = true }
+ahash = { workspace = true }

@@ -1,0 +1,7 @@
+[workspace]
+members = ["minitable", "minitable_derive"]
+resolver = "2"
+
+[workspace.dependencies]
+ahash = "0.8.11"
+slab = "0.4.9"

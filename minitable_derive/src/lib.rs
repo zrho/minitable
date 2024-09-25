@@ -1,8 +1,8 @@
-use std::collections::HashMap;
-
+//! The implementation of the `MiniTable` proc-macro.
 use darling::{util::PathList, FromDeriveInput, FromField, FromMeta};
 use proc_macro2::TokenStream;
 use quote::quote;
+use std::collections::HashMap;
 
 #[proc_macro_derive(MiniTable, attributes(minitable))]
 pub fn mini_table_derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
@@ -12,7 +12,7 @@ pub fn mini_table_derive(input: proc_macro::TokenStream) -> proc_macro::TokenStr
 }
 
 fn impl_mini_table(ast: &syn::DeriveInput) -> syn::Result<TokenStream> {
-    let options = match MiniTableOptions::from_derive_input(&ast) {
+    let options = match MiniTableOptions::from_derive_input(ast) {
         Ok(options) => options,
         Err(err) => return Ok(err.write_errors()),
     };
@@ -34,7 +34,7 @@ fn impl_mini_table(ast: &syn::DeriveInput) -> syn::Result<TokenStream> {
     let mut multi_index_types = Vec::new();
     let mut multi_index_idents = Vec::new();
 
-    for (i, index) in options.indices.iter().enumerate() {
+    for index in options.indices.iter() {
         if index.unique {
             continue;
         }
@@ -66,7 +66,7 @@ fn impl_mini_table(ast: &syn::DeriveInput) -> syn::Result<TokenStream> {
     let mut unique_index_idents = Vec::new();
     let mut unique_index_keys = Vec::new();
 
-    for (i, index) in options.indices.iter().enumerate() {
+    for index in options.indices.iter() {
         if !index.unique {
             continue;
         }

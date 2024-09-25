@@ -1,4 +1,4 @@
-use minitable_derive::MiniTable;
+use minitable::MiniTable;
 
 #[derive(Debug, Clone, MiniTable)]
 #[minitable(module = port)]
