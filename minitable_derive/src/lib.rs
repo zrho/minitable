@@ -3,7 +3,6 @@ use std::collections::HashMap;
 use darling::{util::PathList, FromDeriveInput, FromField, FromMeta};
 use proc_macro2::TokenStream;
 use quote::quote;
-use syn::spanned::Spanned;
 
 #[proc_macro_derive(MiniTable, attributes(minitable))]
 pub fn mini_table_derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
@@ -19,7 +18,7 @@ fn impl_mini_table(ast: &syn::DeriveInput) -> syn::Result<TokenStream> {
     };
 
     let ident = &options.ident;
-    let table = &options.table;
+    let module = &options.module;
 
     let fields = options.data.take_struct().unwrap();
     let mut field_types = HashMap::new();
@@ -29,67 +28,81 @@ fn impl_mini_table(ast: &syn::DeriveInput) -> syn::Result<TokenStream> {
         field_types.insert(path, field.ty.clone());
     }
 
-    let mut index_field_decl = Vec::new();
-    let mut index_fields: Vec<syn::Ident> = Vec::new();
-    let mut index_getters: Vec<syn::Ident> = Vec::new();
-    let mut index_groups = Vec::new();
-    let mut index_keys = Vec::new();
-    let mut index_types = Vec::new();
-    let mut index_idents = Vec::new();
+    let mut multi_index_fields: Vec<syn::Ident> = Vec::new();
+    let mut multi_index_getters: Vec<syn::Ident> = Vec::new();
+    let mut multi_index_keys = Vec::new();
+    let mut multi_index_types = Vec::new();
+    let mut multi_index_idents = Vec::new();
 
     for (i, index) in options.indices.iter().enumerate() {
-        let fields = &index.fields;
-
-        index_idents.push(fields.iter().collect::<Vec<_>>());
-
-        let index_field = syn::Ident::new(&format!("index_{}", i), ast.span());
-        index_fields.push(index_field.clone());
-
-        let index_getter = index
-            .getter
-            .clone()
-            .unwrap_or_else(|| syn::Ident::new(&format!("get_by_{}", i), ast.span()));
-        // let index_getter = syn::Ident::new(&format!("get_by_{}", i), ast.span()).into();
-        index_getters.push(index_getter);
-
-        let mut types = Vec::<syn::Type>::new();
-
-        for field in fields.iter() {
-            let ty = field_types.get(field).unwrap();
-            types.push(ty.clone());
+        if index.unique {
+            continue;
         }
 
-        index_types.push(types.clone());
+        let fields = &index.fields;
 
-        index_field_decl.push(quote! {
-            pub #index_field: ::std::collections::HashMap<(#(#types),*), (usize, usize)>
-        });
+        multi_index_idents.push(fields.iter().collect::<Vec<_>>());
 
-        index_groups.push(quote! {
-            #index_field: [usize; 2]
-        });
+        let index_field = index.index_field();
+        multi_index_fields.push(index_field.clone());
+        multi_index_getters.push(index.getter());
 
-        index_keys.push(quote! {
+        multi_index_types.push(
+            index
+                .fields
+                .iter()
+                .map(|field| field_types.get(field).unwrap().clone())
+                .collect::<Vec<_>>(),
+        );
+
+        multi_index_keys.push(quote! {
             (#(item.#fields.clone()),*)
         })
     }
 
-    Ok(quote! {
-        pub mod #table {
-            use super::#ident;
+    let mut unique_index_fields = Vec::new();
+    let mut unique_index_types = Vec::new();
+    let mut unique_index_getters: Vec<syn::Ident> = Vec::new();
+    let mut unique_index_idents = Vec::new();
+    let mut unique_index_keys = Vec::new();
 
-            #[derive(Clone, Debug)]
+    for (i, index) in options.indices.iter().enumerate() {
+        if !index.unique {
+            continue;
+        }
+
+        let fields = &index.fields;
+
+        unique_index_idents.push(index.fields.iter().collect::<Vec<_>>());
+        unique_index_fields.push(index.index_field());
+        unique_index_getters.push(index.getter());
+        unique_index_types.push(
+            index
+                .fields
+                .iter()
+                .map(|field| field_types.get(field).unwrap().clone())
+                .collect::<Vec<_>>(),
+        );
+        unique_index_keys.push(quote! {
+            (#(item.#fields.clone()),*)
+        });
+    }
+
+    Ok(quote! {
+        pub mod #module {
+            use super::*;
+
+            #[derive(Clone, Default)]
             pub struct Table {
                 pub store: ::slab::Slab<Row>,
-                #(#index_field_decl),*
+                #(pub #multi_index_fields: ::ahash::AHashMap<(#(#multi_index_types),*), (usize, usize)>,)*
+                #(pub #unique_index_fields: ::ahash::AHashMap<(#(#unique_index_types),*), usize>,)*
             }
 
             impl Table {
+                #[inline]
                 pub fn new() -> Self {
-                    Self {
-                        store: ::slab::Slab::new(),
-                        #(#index_fields: ::std::collections::HashMap::new()),*
-                    }
+                    Self::default()
                 }
 
                 #[inline]
@@ -98,55 +111,133 @@ fn impl_mini_table(ast: &syn::DeriveInput) -> syn::Result<TokenStream> {
                 }
 
                 #(
-                    pub fn #index_getters(&self, #(#index_idents: #index_types),*) -> impl Iterator<Item = usize> + '_ {
-                        let mut next = self.#index_fields.get(&(#(#index_idents),*)).map(|(id, count)| (*id, *count - 1));
+                    pub fn #multi_index_getters(&self, #(#multi_index_idents: #multi_index_types),*) -> impl Iterator<Item = usize> + '_ {
+                        let mut next = self.#multi_index_fields.get(&(#(#multi_index_idents),*)).map(|(id, count)| (*id, *count - 1));
                         ::std::iter::from_fn(move || {
                             let (id, count) = next?;
                             next = count.checked_sub(1).map(|count| {
-                                (self.store[id].#index_fields[1], count)
+                                (self.store[id].#multi_index_fields[1], count)
                             });
                             Some(id)
                         })
                     }
                 )*
 
+                #(
+                    pub fn #unique_index_getters(&self, #(#unique_index_idents: #unique_index_types),*) -> Option<usize> {
+                        self.#unique_index_fields.get(&(#(#unique_index_idents),*)).copied()
+                    }
+                )*
+
+                #[inline]
                 pub fn insert(&mut self, item: #ident) -> usize {
+                    self.try_insert(item).expect("uniqueness violation")
+                }
+
+                pub fn try_insert(&mut self, item: #ident) -> Option<usize> {
                     let id = self.store.vacant_key();
 
                     let mut row = Row {
                         item: item.clone(),
-                        #(#index_fields: [id, id]),*
+                        #(#multi_index_fields: [id, id]),*
                     };
 
+                    // Check uniqueness
                     #(
-                        match self.#index_fields.entry(#index_keys) {
+                        if self.#unique_index_fields.contains_key(&#unique_index_keys) {
+                            return None;
+                        }
+                    )*
+
+                    // Create unique indices
+                    #(
+                        self.#unique_index_fields.insert(#unique_index_keys, id);
+                    )*
+
+                    // Create multi indices
+                    #(
+                        match self.#multi_index_fields.entry(#multi_index_keys) {
                             ::std::collections::hash_map::Entry::Vacant(entry) => {
                                 entry.insert((id, 1));
                             }
                             ::std::collections::hash_map::Entry::Occupied(mut entry) => {
                                 let (other, count) = *entry.get();
-                                let other_prev = self.store[other].#index_fields[0];
-                                self.store[other].#index_fields[0] = id;
-                                self.store[other_prev].#index_fields[1] = id;
-                                row.#index_fields[0] = other_prev;
-                                row.#index_fields[1] = other;
+                                let other_prev = self.store[other].#multi_index_fields[0];
+                                self.store[other].#multi_index_fields[0] = id;
+                                self.store[other_prev].#multi_index_fields[1] = id;
+                                row.#multi_index_fields[0] = other_prev;
+                                row.#multi_index_fields[1] = other;
                                 entry.insert((id, count + 1));
                             }
                         }
                     )*
 
-                    self.store.insert(row)
+                    Some(self.store.insert(row))
                 }
 
                 pub fn remove(&mut self, id: usize) -> Option<#ident> {
-                    todo!()
+                    let row = self.store.try_remove(id)?;
+                    let item = row.item;
+
+                    #(
+                        let [prev, next] = row.#multi_index_fields;
+
+                        if prev == id {
+                            self.#multi_index_fields.remove(&#multi_index_keys);
+                        } else {
+                            self.store[prev].#multi_index_fields[1] = next;
+                            self.store[next].#multi_index_fields[0] = prev;
+                            let entry = self.#multi_index_fields.get_mut(&#multi_index_keys).unwrap();
+                            *entry = (prev, entry.1 - 1);
+                        }
+                    )*
+
+                    #(
+                        self.#unique_index_fields.remove(&#unique_index_keys);
+                    )*
+
+                    Some(item)
+                }
+
+                #[inline]
+                pub fn contains(&self, id: usize) -> bool {
+                    self.store.contains(id)
+                }
+
+                #[inline]
+                pub fn len(&self) -> usize {
+                    self.store.len()
+                }
+
+                pub fn clear(&mut self) {
+                    self.store.clear();
+                    #(
+                        self.#unique_index_fields.clear();
+                    )*
+                    #(
+                        self.#multi_index_fields.clear();
+                    )*
+                }
+            }
+
+            impl std::fmt::Debug for Table {
+                fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                    struct Helper<'a>(&'a Table);
+
+                    impl std::fmt::Debug for Helper<'_> {
+                        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                            f.debug_map().entries(self.0.store.iter()).finish()
+                        }
+                    }
+
+                    f.debug_tuple("Table").field(&Helper(self)).finish()
                 }
             }
 
             #[derive(Clone, Debug)]
             pub struct Row {
                 item: #ident,
-                #(#index_groups),*
+                #(#multi_index_fields: [usize; 2]),*
             }
         }
     })
@@ -157,7 +248,7 @@ fn impl_mini_table(ast: &syn::DeriveInput) -> syn::Result<TokenStream> {
 struct MiniTableOptions {
     ident: syn::Ident,
     data: darling::ast::Data<(), FieldOptions>,
-    table: syn::Ident,
+    module: syn::Ident,
     #[darling(default, multiple, rename = "index")]
     indices: Vec<IndexAttr>,
 }
@@ -167,6 +258,26 @@ struct IndexAttr {
     fields: PathList,
     #[darling(default)]
     getter: Option<syn::Ident>,
+    #[darling(default)]
+    unique: bool,
+}
+
+impl IndexAttr {
+    pub fn getter(&self) -> syn::Ident {
+        self.getter.clone().unwrap_or_else(|| {
+            syn::Ident::new(
+                &format!("get_by_{}", self.fields.len()),
+                proc_macro2::Span::call_site(),
+            )
+        })
+    }
+
+    pub fn index_field(&self) -> syn::Ident {
+        syn::Ident::new(
+            &format!("index_{}", self.fields.len()),
+            proc_macro2::Span::call_site(),
+        )
+    }
 }
 
 #[derive(FromField)]
