@@ -14,9 +14,9 @@ pub struct Port {
 
 #[derive(Debug, Clone, MiniTable)]
 #[minitable(module = node)]
-#[minitable(index(fields(parent), getter = get_children))]
+#[minitable(index(fields(parent)))]
 pub struct Node {
-    parent: u32,
+    parent: Option<u32>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -29,6 +29,29 @@ pub enum Direction {
 pub struct Graph {
     ports: port::Table,
     nodes: node::Table,
+}
+
+impl Graph {
+    #[inline]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    #[inline]
+    pub fn get_roots(&self) -> impl Iterator<Item = u32> + '_ {
+        self.nodes.get_by_parent(None).map(|id| id as _)
+    }
+
+    #[inline]
+    pub fn get_children(&self, parent: u32) -> impl Iterator<Item = u32> + '_ {
+        self.nodes.get_by_parent(Some(parent)).map(|id| id as _)
+    }
+
+    #[inline]
+    pub fn add_node(&mut self, parent: Option<u32>) -> u32 {
+        let id = self.nodes.insert(Node { parent }) as _;
+        id
+    }
 }
 
 pub fn main() {

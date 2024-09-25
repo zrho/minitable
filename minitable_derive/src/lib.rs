@@ -265,8 +265,14 @@ struct IndexAttr {
 impl IndexAttr {
     pub fn getter(&self) -> syn::Ident {
         self.getter.clone().unwrap_or_else(|| {
+            let fields = self
+                .fields
+                .iter()
+                .map(|field| field.get_ident().unwrap().to_string())
+                .collect::<Vec<_>>();
+
             syn::Ident::new(
-                &format!("get_by_{}", self.fields.len()),
+                &format!("get_by_{}", fields.join("_")),
                 proc_macro2::Span::call_site(),
             )
         })
