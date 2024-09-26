@@ -12,11 +12,6 @@
 //! the row must be removed and reinserted. We might add support for in-place modification in the
 //! future.
 //!
-//! By default, an index is non-unique, meaning that multiple rows can have the same value for the
-//! indexed fields. If the `unique` attribute is added to an index attribute, we ensure that the
-//! value of the indexed fields is unique across all rows in the table.
-//! This allows slightly more efficient data structures to be used for the index.
-//!
 //! # Example
 //!
 //! # Notes
@@ -24,7 +19,7 @@
 //!  - Struct fields are cloned when they occur in an index. It is therefore wise to use
 //!    types that are cheap to clone.
 //!  - Concurrent modification and durability are out of scope. Use a real database if you need those.
-//!  - The table uses intrusive cyclic doubly linked list for non-unique indices. This allows us to avoid
+//!  - The table uses intrusive cyclic doubly linked list for indices. This allows us to avoid
 //!    additional allocations beyond the slab and the hash tables for the indices. Moreover this enables
 //!    `O(1)` removal of elements from the index.
 //!  - We currently use the `ahash` crate for hashing. This might become customizable in the future.
