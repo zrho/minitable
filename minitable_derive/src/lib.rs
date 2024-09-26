@@ -63,7 +63,7 @@ fn impl_mini_table(ast: &syn::DeriveInput) -> syn::Result<TokenStream> {
             #[derive(Clone, Default)]
             pub struct Table {
                 pub store: ::slab::Slab<Row>,
-                #(pub #multi_index_fields: ::ahash::AHashMap<(#(#multi_index_types),*), (usize, usize)>,)*
+                #(pub #multi_index_fields: ::ahash::AHashMap<(#(#multi_index_types),*), (u32, u32)>,)*
             }
 
             impl Table {
@@ -85,7 +85,7 @@ fn impl_mini_table(ast: &syn::DeriveInput) -> syn::Result<TokenStream> {
                     pub fn #multi_index_getters(&self, #(#multi_index_idents: #multi_index_types),*) -> impl ::std::iter::ExactSizeIterator<Item = usize> + '_ {
                         struct Iter<'a> {
                             table: &'a Table,
-                            next: Option<(usize, usize)>,
+                            next: Option<(u32, u32)>,
                         }
 
                         impl<'a> ::std::iter::Iterator for Iter<'a> {
@@ -94,13 +94,13 @@ fn impl_mini_table(ast: &syn::DeriveInput) -> syn::Result<TokenStream> {
                             fn next(&mut self) -> Option<Self::Item> {
                                 let (id, count) = self.next?;
                                 self.next = count.checked_sub(1).map(|count| {
-                                    (self.table.store[id].#multi_index_fields[1], count)
+                                    (self.table.store[id as usize].#multi_index_fields[1], count)
                                 });
-                                Some(id)
+                                Some(id as usize)
                             }
 
                             fn size_hint(&self) -> (usize, Option<usize>) {
-                                (0, Some(self.next.map(|(_, count)| count + 1).unwrap_or(0)))
+                                (0, Some(self.next.map(|(_, count)| count as usize + 1).unwrap_or(0)))
                             }
                         }
 
@@ -117,22 +117,22 @@ fn impl_mini_table(ast: &syn::DeriveInput) -> syn::Result<TokenStream> {
 
                     let mut row = Row {
                         item: item.clone(),
-                        #(#multi_index_fields: [id, id]),*
+                        #(#multi_index_fields: [id as u32, id as u32]),*
                     };
 
                     #(
                         match self.#multi_index_fields.entry(#multi_index_keys) {
                             ::std::collections::hash_map::Entry::Vacant(entry) => {
-                                entry.insert((id, 1));
+                                entry.insert((id as u32, 1));
                             }
                             ::std::collections::hash_map::Entry::Occupied(mut entry) => {
                                 let (other, count) = *entry.get();
-                                let other_prev = self.store[other].#multi_index_fields[0];
-                                self.store[other].#multi_index_fields[0] = id;
-                                self.store[other_prev].#multi_index_fields[1] = id;
+                                let other_prev = self.store[other as usize].#multi_index_fields[0];
+                                self.store[other as usize].#multi_index_fields[0] = id as u32;
+                                self.store[other_prev as usize].#multi_index_fields[1] = id as u32;
                                 row.#multi_index_fields[0] = other_prev;
                                 row.#multi_index_fields[1] = other;
-                                entry.insert((id, count + 1));
+                                entry.insert((id as u32, count + 1));
                             }
                         }
                     )*
@@ -150,11 +150,11 @@ fn impl_mini_table(ast: &syn::DeriveInput) -> syn::Result<TokenStream> {
                     #(
                         let [prev, next] = row.#multi_index_fields;
 
-                        if prev == id {
+                        if prev as usize == id {
                             self.#multi_index_fields.remove(&#multi_index_keys);
                         } else {
-                            self.store[prev].#multi_index_fields[1] = next;
-                            self.store[next].#multi_index_fields[0] = prev;
+                            self.store[prev as usize].#multi_index_fields[1] = next;
+                            self.store[next as usize].#multi_index_fields[0] = prev;
                             let entry = self.#multi_index_fields.get_mut(&#multi_index_keys).unwrap();
                             *entry = (prev, entry.1 - 1);
                         }
@@ -213,7 +213,7 @@ fn impl_mini_table(ast: &syn::DeriveInput) -> syn::Result<TokenStream> {
             #[derive(Clone, Debug)]
             pub struct Row {
                 item: #ident,
-                #(#multi_index_fields: [usize; 2]),*
+                #(#multi_index_fields: [u32; 2]),*
             }
         }
     })

@@ -3,6 +3,8 @@ use minitable::MiniTable;
 
 #[derive(Debug, Clone, MiniTable)]
 #[minitable(module = edge)]
+#[minitable(index(fields(source)))]
+#[minitable(index(fields(target)))]
 pub struct Edge {
     source: u32,
     target: u32,
