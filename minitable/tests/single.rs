@@ -11,7 +11,6 @@ macro_rules! assert_eq_sorted {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, MiniTable)]
-#[minitable(module = item)]
 #[minitable(index(fields(value)))]
 pub struct Item {
     pub value: u32,
@@ -19,7 +18,7 @@ pub struct Item {
 
 #[test]
 pub fn test_remove() {
-    let mut table = item::Table::new();
+    let mut table = ItemTable::new();
 
     let a = table.insert(Item { value: 0 });
     let b = table.insert(Item { value: 1 });
@@ -37,7 +36,7 @@ pub fn test_remove() {
 
 #[test]
 pub fn test_remove_reinsert() {
-    let mut table = item::Table::new();
+    let mut table = ItemTable::new();
 
     let a = table.insert(Item { value: 0 });
     let b = table.insert(Item { value: 1 });

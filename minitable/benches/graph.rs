@@ -2,7 +2,6 @@ use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use minitable::MiniTable;
 
 #[derive(Debug, Clone, MiniTable)]
-#[minitable(module = edge)]
 #[minitable(index(fields(source)))]
 #[minitable(index(fields(target)))]
 pub struct Edge {
@@ -13,7 +12,7 @@ pub struct Edge {
 pub fn insert_fully_connected(c: &mut Criterion) {
     c.bench_function("insert_fully_connected", |b| {
         b.iter(|| {
-            let mut table = edge::Table::new();
+            let mut table = EdgeTable::new();
 
             for i in 0..100 {
                 for j in 0..100 {
