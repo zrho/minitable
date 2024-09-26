@@ -234,6 +234,18 @@ fn impl_mini_table(ast: &syn::DeriveInput) -> syn::Result<TokenStream> {
                 }
             }
 
+            impl ::std::iter::FromIterator<#ident> for Table {
+                fn from_iter<T: ::std::iter::IntoIterator<Item = #ident>>(iter: T) -> Self {
+                    let mut table = Self::new();
+
+                    for item in iter {
+                        table.insert(item);
+                    }
+
+                    table
+                }
+            }
+
             #[derive(Clone, Debug)]
             pub struct Row {
                 item: #ident,
@@ -265,14 +277,8 @@ struct IndexAttr {
 impl IndexAttr {
     pub fn getter(&self) -> syn::Ident {
         self.getter.clone().unwrap_or_else(|| {
-            let fields = self
-                .fields
-                .iter()
-                .map(|field| field.get_ident().unwrap().to_string())
-                .collect::<Vec<_>>();
-
             syn::Ident::new(
-                &format!("get_by_{}", fields.join("_")),
+                &format!("get_by_{}", self.fields().join("_")),
                 proc_macro2::Span::call_site(),
             )
         })
@@ -280,9 +286,16 @@ impl IndexAttr {
 
     pub fn index_field(&self) -> syn::Ident {
         syn::Ident::new(
-            &format!("index_{}", self.fields.len()),
+            &format!("index_{}", self.fields().join("_")),
             proc_macro2::Span::call_site(),
         )
+    }
+
+    pub fn fields(&self) -> Vec<String> {
+        self.fields
+            .iter()
+            .map(|field| field.get_ident().unwrap().to_string())
+            .collect()
     }
 }
 

@@ -7,3 +7,10 @@ edition = "2021"
 minitable_derive = { path = "../minitable_derive" }
 slab = { workspace = true }
 ahash = { workspace = true }
+
+[dev-dependencies]
+criterion = "0.5.1"
+
+[[bench]]
+name = "graph"
+harness = false
