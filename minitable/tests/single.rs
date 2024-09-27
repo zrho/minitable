@@ -1,4 +1,6 @@
 use minitable::MiniTable;
+use std::fmt::Debug;
+use std::hash::Hash;
 
 macro_rules! assert_eq_sorted {
     ($left:expr, $right:expr) => {
@@ -49,4 +51,13 @@ pub fn test_remove_reinsert() {
     assert_eq_sorted!(table.get_by_value(0), [a, d]);
     assert_eq!(table.insert(item), c);
     assert_eq_sorted!(table.get_by_value(0), [a, d, c]);
+}
+
+#[derive(Debug, Clone, MiniTable)]
+#[minitable(index(fields(value)))]
+pub struct Generic<T>
+where
+    T: Eq + Hash + Clone + Debug + Default,
+{
+    value: T,
 }

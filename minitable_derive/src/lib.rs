@@ -3,6 +3,7 @@ use darling::{util::PathList, FromDeriveInput, FromField, FromMeta};
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 use std::collections::HashMap;
+use syn::parse_quote;
 
 #[proc_macro_derive(MiniTable, attributes(minitable))]
 pub fn mini_table_derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
@@ -86,15 +87,22 @@ fn impl_mini_table(ast: &syn::DeriveInput) -> syn::Result<TokenStream> {
     let table_type = format_ident!("{}Table", ident);
     let row_type = format_ident!("{}Row", ident);
 
+    let (impl_generics, ty_generics, where_clause) = options.generics.split_for_impl();
+
+    let mut helper_generics = options.generics.clone();
+    helper_generics.params.insert(0, parse_quote! { '__a });
+    let (helper_impl_generics, helper_ty_generics, helper_where_clause) =
+        helper_generics.split_for_impl();
+
     Ok(quote! {
         #[derive(Clone, Default)]
-        pub struct #table_type {
-            store: ::slab::Slab<#row_type>,
+        pub struct #table_type #ty_generics #where_clause {
+            store: ::slab::Slab<#row_type #ty_generics>,
             #(#multi_index_fields: ::ahash::AHashMap<(#(#multi_index_types),*), (u32, u32)>,)*
             #(#unique_index_fields: ::ahash::AHashMap<(#(#unique_index_types),*), u32>,)*
         }
 
-        impl #table_type {
+        impl #impl_generics #table_type #ty_generics #where_clause {
             /// Create a new empty table.
             #[inline]
             pub fn new() -> Self {
@@ -103,7 +111,7 @@ fn impl_mini_table(ast: &syn::DeriveInput) -> syn::Result<TokenStream> {
 
             /// Get a reference to an item by its id.
             #[inline]
-            pub fn get(&self, id: usize) -> Option<&#ident> {
+            pub fn get(&self, id: usize) -> Option<&#ident #ty_generics> {
                 self.store.get(id).map(|row| &row.item)
             }
 
@@ -111,13 +119,13 @@ fn impl_mini_table(ast: &syn::DeriveInput) -> syn::Result<TokenStream> {
                 /// Iterate over items in the table by an index lookup.
                 #[inline]
                 pub fn #multi_index_getters(&self, #(#multi_index_idents: #multi_index_types),*) -> impl ::std::iter::ExactSizeIterator<Item = usize> + '_ {
-                    struct Iter<'a> {
-                        table: &'a #table_type,
+                    struct Iter #helper_ty_generics #helper_where_clause {
+                        table: &'__a #table_type #ty_generics,
                         count: usize,
                         next: Option<u32>,
                     }
 
-                    impl<'a> ::std::iter::Iterator for Iter<'a> {
+                    impl #helper_impl_generics ::std::iter::Iterator for Iter #helper_ty_generics #helper_where_clause {
                         type Item = usize;
 
                         fn next(&mut self) -> Option<Self::Item> {
@@ -132,7 +140,7 @@ fn impl_mini_table(ast: &syn::DeriveInput) -> syn::Result<TokenStream> {
                         }
                     }
 
-                    impl<'a> ::std::iter::ExactSizeIterator for Iter<'a> {}
+                    impl #helper_impl_generics ::std::iter::ExactSizeIterator for Iter #helper_ty_generics #helper_where_clause {}
 
                     match self.#multi_index_fields.get(&(#(#multi_index_idents),*)) {
                         Some((id, count)) => Iter { table: self, next: Some(*id), count: *count as usize },
@@ -149,15 +157,15 @@ fn impl_mini_table(ast: &syn::DeriveInput) -> syn::Result<TokenStream> {
             )*
 
             #(
-                pub fn #multi_index_drain(&mut self, #(#multi_index_idents: #multi_index_types),*) -> impl ::std::iter::ExactSizeIterator<Item = (usize, #ident)> + '_ {
-                    struct Drain<'a> {
-                        table: &'a mut #table_type,
+                pub fn #multi_index_drain(&mut self, #(#multi_index_idents: #multi_index_types),*) -> impl ::std::iter::ExactSizeIterator<Item = (usize, #ident #ty_generics)> + '_ {
+                    struct Drain #helper_ty_generics #helper_where_clause {
+                        table: &'__a mut #table_type #ty_generics,
                         count: usize,
                         next: Option<u32>,
                     }
 
-                    impl<'a> ::std::iter::Iterator for Drain<'a> {
-                        type Item = (usize, #ident);
+                    impl #helper_impl_generics ::std::iter::Iterator for Drain #helper_ty_generics #helper_where_clause {
+                        type Item = (usize, #ident #ty_generics);
 
                         fn next(&mut self) -> Option<Self::Item> {
                             let id = self.next? as usize;
@@ -172,7 +180,7 @@ fn impl_mini_table(ast: &syn::DeriveInput) -> syn::Result<TokenStream> {
                         }
                     }
 
-                    impl<'a> ::std::iter::ExactSizeIterator for Drain<'a> {}
+                    impl #helper_impl_generics ::std::iter::ExactSizeIterator for Drain #helper_ty_generics #helper_where_clause {}
 
                     match self.#multi_index_fields.get(&(#(#multi_index_idents),*)) {
                         Some((id, count)) => Drain { next: Some(*id), count: *count as usize, table: self, },
@@ -188,7 +196,7 @@ fn impl_mini_table(ast: &syn::DeriveInput) -> syn::Result<TokenStream> {
             )*
 
             #(
-                pub fn #unique_index_remove(&mut self, #(#unique_index_idents: #unique_index_types),*) -> Option<(usize, #ident)> {
+                pub fn #unique_index_remove(&mut self, #(#unique_index_idents: #unique_index_types),*) -> Option<(usize, #ident #ty_generics)> {
                     let id = self.#unique_index_getters(#(#unique_index_idents),*)?;
                     let item = self.remove(id)?;
                     Some((id, item))
@@ -196,12 +204,12 @@ fn impl_mini_table(ast: &syn::DeriveInput) -> syn::Result<TokenStream> {
             )*
 
             /// Insert a new item into the table and return its id.
-            pub fn insert(&mut self, item: #ident) -> usize {
+            pub fn insert(&mut self, item: #ident #ty_generics) -> usize {
                 self.try_insert(item).expect("insert failed")
             }
 
             /// Insert a new item into the table and return its id, if possible.
-            pub fn try_insert(&mut self, item: #ident) -> Option<usize> {
+            pub fn try_insert(&mut self, item: #ident #ty_generics) -> Option<usize> {
                 let id = self.store.vacant_key();
 
                 let mut row = #row_type {
@@ -246,7 +254,7 @@ fn impl_mini_table(ast: &syn::DeriveInput) -> syn::Result<TokenStream> {
             /// Remove the item with the given id from the table.
             ///
             /// Returns the removed item if it was present, or `None` otherwise.
-            pub fn remove(&mut self, id: usize) -> Option<#ident> {
+            pub fn remove(&mut self, id: usize) -> Option<#ident #ty_generics> {
                 let row = self.store.try_remove(id)?;
                 let item = row.item;
 
@@ -294,11 +302,11 @@ fn impl_mini_table(ast: &syn::DeriveInput) -> syn::Result<TokenStream> {
             }
         }
 
-        impl std::fmt::Debug for #table_type {
+        impl #impl_generics std::fmt::Debug for #table_type #ty_generics #where_clause {
             fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-                struct Helper<'a>(&'a #table_type);
+                struct Helper #helper_ty_generics (&'__a #table_type #ty_generics) #helper_where_clause;
 
-                impl std::fmt::Debug for Helper<'_> {
+                impl #helper_impl_generics std::fmt::Debug for Helper #helper_ty_generics #helper_where_clause {
                     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
                         f.debug_map().entries(self.0.store.iter()).finish()
                     }
@@ -308,8 +316,8 @@ fn impl_mini_table(ast: &syn::DeriveInput) -> syn::Result<TokenStream> {
             }
         }
 
-        impl ::std::iter::FromIterator<#ident> for #table_type {
-            fn from_iter<T: ::std::iter::IntoIterator<Item = #ident>>(iter: T) -> Self {
+        impl #impl_generics ::std::iter::FromIterator<#ident #ty_generics> for #table_type #ty_generics #where_clause {
+            fn from_iter<__I: ::std::iter::IntoIterator<Item = #ident #ty_generics>>(iter: __I) -> Self {
                 let mut table = Self::new();
 
                 for item in iter {
@@ -320,8 +328,8 @@ fn impl_mini_table(ast: &syn::DeriveInput) -> syn::Result<TokenStream> {
             }
         }
 
-        impl ::std::ops::Index<usize> for #table_type {
-            type Output = #ident;
+        impl #impl_generics ::std::ops::Index<usize> for #table_type #ty_generics #where_clause {
+            type Output = #ident #ty_generics;
 
             fn index(&self, index: usize) -> &Self::Output {
                 &self.store[index].item
@@ -329,8 +337,8 @@ fn impl_mini_table(ast: &syn::DeriveInput) -> syn::Result<TokenStream> {
         }
 
         #[derive(Clone, Debug)]
-        pub struct #row_type {
-            item: #ident,
+        pub struct #row_type #ty_generics #where_clause {
+            item: #ident #ty_generics,
             #(#multi_index_fields: [u32; 2]),*
         }
     })
@@ -340,6 +348,7 @@ fn impl_mini_table(ast: &syn::DeriveInput) -> syn::Result<TokenStream> {
 #[darling(attributes(minitable), supports(struct_named))]
 struct MiniTableOptions {
     ident: syn::Ident,
+    generics: syn::Generics,
     data: darling::ast::Data<(), FieldOptions>,
     #[darling(default, multiple, rename = "index")]
     indices: Vec<IndexAttr>,
