@@ -31,11 +31,14 @@ fn impl_mini_table(ast: &syn::DeriveInput) -> syn::Result<TokenStream> {
     let mut multi_index_getters: Vec<syn::Ident> = Vec::new();
     let mut multi_index_remove: Vec<syn::Ident> = Vec::new();
     let mut multi_index_drain: Vec<syn::Ident> = Vec::new();
-    let mut multi_index_keys = Vec::new();
     let mut multi_index_types = Vec::new();
     let mut multi_index_idents = Vec::new();
 
     for index in options.indices.iter() {
+        if index.unique {
+            continue;
+        }
+
         let fields = &index.fields;
 
         multi_index_idents.push(fields.iter().collect::<Vec<_>>());
@@ -51,10 +54,33 @@ fn impl_mini_table(ast: &syn::DeriveInput) -> syn::Result<TokenStream> {
                 .map(|field| field_types.get(field).unwrap().clone())
                 .collect::<Vec<_>>(),
         );
+    }
 
-        multi_index_keys.push(quote! {
-            (#(item.#fields.clone()),*)
-        })
+    let mut unique_index_fields: Vec<syn::Ident> = Vec::new();
+    let mut unique_index_getters: Vec<syn::Ident> = Vec::new();
+    let mut unique_index_remove: Vec<syn::Ident> = Vec::new();
+    let mut unique_index_types = Vec::new();
+    let mut unique_index_idents = Vec::new();
+
+    for index in options.indices.iter() {
+        if !index.unique {
+            continue;
+        }
+
+        let fields = &index.fields;
+
+        unique_index_idents.push(fields.iter().collect::<Vec<_>>());
+        unique_index_fields.push((format_ident!("index_{}", index.fields().join("_"))).clone());
+        unique_index_getters.push(format_ident!("get_by_{}", index.fields().join("_")));
+        unique_index_remove.push(format_ident!("remove_by_{}", index.fields().join("_")));
+
+        unique_index_types.push(
+            index
+                .fields
+                .iter()
+                .map(|field| field_types.get(field).unwrap().clone())
+                .collect::<Vec<_>>(),
+        );
     }
 
     let table_type = format_ident!("{}Table", ident);
@@ -65,6 +91,7 @@ fn impl_mini_table(ast: &syn::DeriveInput) -> syn::Result<TokenStream> {
         pub struct #table_type {
             store: ::slab::Slab<#row_type>,
             #(#multi_index_fields: ::ahash::AHashMap<(#(#multi_index_types),*), (u32, u32)>,)*
+            #(#unique_index_fields: ::ahash::AHashMap<(#(#unique_index_types),*), u32>,)*
         }
 
         impl #table_type {
@@ -115,6 +142,13 @@ fn impl_mini_table(ast: &syn::DeriveInput) -> syn::Result<TokenStream> {
             )*
 
             #(
+                #[inline]
+                pub fn #unique_index_getters(&self, #(#unique_index_idents: #unique_index_types),*) -> Option<usize> {
+                    Some(*self.#unique_index_fields.get(&(#(#unique_index_idents),*))? as usize)
+                }
+            )*
+
+            #(
                 pub fn #multi_index_drain(&mut self, #(#multi_index_idents: #multi_index_types),*) -> impl ::std::iter::ExactSizeIterator<Item = (usize, #ident)> + '_ {
                     struct Drain<'a> {
                         table: &'a mut #table_type,
@@ -145,14 +179,28 @@ fn impl_mini_table(ast: &syn::DeriveInput) -> syn::Result<TokenStream> {
                         None => Drain { table: self, next: None, count: 0 }
                     }
                 }
+            )*
 
+            #(
                 pub fn #multi_index_remove(&mut self, #(#multi_index_idents: #multi_index_types),*) {
                     for _ in self.#multi_index_drain(#(#multi_index_idents),*) {}
                 }
             )*
 
+            #(
+                pub fn #unique_index_remove(&mut self, #(#unique_index_idents: #unique_index_types),*) -> Option<#ident> {
+                    let id = self.#unique_index_getters(#(#unique_index_idents),*)?;
+                    self.remove(id)
+                }
+            )*
+
             /// Insert a new item into the table and return its id.
             pub fn insert(&mut self, item: #ident) -> usize {
+                self.try_insert(item).expect("insert failed")
+            }
+
+            /// Insert a new item into the table and return its id, if possible.
+            pub fn try_insert(&mut self, item: #ident) -> Option<usize> {
                 let id = self.store.vacant_key();
 
                 let mut row = #row_type {
@@ -160,8 +208,22 @@ fn impl_mini_table(ast: &syn::DeriveInput) -> syn::Result<TokenStream> {
                     #(#multi_index_fields: [id as u32, id as u32]),*
                 };
 
+                // For the unique indices, we must verify that inserting the item does not break uniqueness.
+                // To avoid having to do rollbacks, we first collect all the entries for the unique indices.
                 #(
-                    match self.#multi_index_fields.entry(#multi_index_keys) {
+                    let #unique_index_fields = match self.#unique_index_fields.entry((#(item.#unique_index_idents.clone()),*)) {
+                        ::std::collections::hash_map::Entry::Vacant(entry) => entry,
+                        ::std::collections::hash_map::Entry::Occupied(_) => return None,
+                    };
+                )*
+
+                // Once we have vacant entries for all unique indices, we can safely insert the item.
+                #(
+                    #unique_index_fields.insert(id as u32);
+                )*
+
+                #(
+                    match self.#multi_index_fields.entry((#(item.#multi_index_idents.clone()),*)) {
                         ::std::collections::hash_map::Entry::Vacant(entry) => {
                             entry.insert((id as u32, 1));
                         }
@@ -177,7 +239,7 @@ fn impl_mini_table(ast: &syn::DeriveInput) -> syn::Result<TokenStream> {
                     }
                 )*
 
-                self.store.insert(row)
+                Some(self.store.insert(row))
             }
 
             /// Remove the item with the given id from the table.
@@ -188,14 +250,18 @@ fn impl_mini_table(ast: &syn::DeriveInput) -> syn::Result<TokenStream> {
                 let item = row.item;
 
                 #(
+                    self.#unique_index_fields.remove(&(#(item.#unique_index_idents.clone()),*));
+                )*
+
+                #(
                     let [prev, next] = row.#multi_index_fields;
 
                     if prev as usize == id {
-                        self.#multi_index_fields.remove(&#multi_index_keys);
+                        self.#multi_index_fields.remove(&(#(item.#multi_index_idents.clone()),*));
                     } else {
                         self.store[prev as usize].#multi_index_fields[1] = next;
                         self.store[next as usize].#multi_index_fields[0] = prev;
-                        let entry = self.#multi_index_fields.get_mut(&#multi_index_keys).unwrap();
+                        let entry = self.#multi_index_fields.get_mut(&(#(item.#multi_index_idents.clone()),*)).unwrap();
                         *entry = (prev, entry.1 - 1);
                     }
                 )*
@@ -218,6 +284,9 @@ fn impl_mini_table(ast: &syn::DeriveInput) -> syn::Result<TokenStream> {
             /// Remove all items from the table.
             pub fn clear(&mut self) {
                 self.store.clear();
+                #(
+                    self.#unique_index_fields.clear();
+                )*
                 #(
                     self.#multi_index_fields.clear();
                 )*
@@ -278,6 +347,8 @@ struct MiniTableOptions {
 #[derive(FromMeta)]
 struct IndexAttr {
     fields: PathList,
+    #[darling(default)]
+    unique: bool,
 }
 
 impl IndexAttr {
