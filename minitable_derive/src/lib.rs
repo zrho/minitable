@@ -1,7 +1,7 @@
 //! The implementation of the `MiniTable` proc-macro.
 use darling::{util::PathList, FromDeriveInput, FromField, FromMeta};
 use proc_macro2::TokenStream;
-use quote::quote;
+use quote::{format_ident, quote};
 use std::collections::HashMap;
 
 #[proc_macro_derive(MiniTable, attributes(minitable))]
@@ -29,6 +29,8 @@ fn impl_mini_table(ast: &syn::DeriveInput) -> syn::Result<TokenStream> {
 
     let mut multi_index_fields: Vec<syn::Ident> = Vec::new();
     let mut multi_index_getters: Vec<syn::Ident> = Vec::new();
+    let mut multi_index_remove: Vec<syn::Ident> = Vec::new();
+    let mut multi_index_drain: Vec<syn::Ident> = Vec::new();
     let mut multi_index_keys = Vec::new();
     let mut multi_index_types = Vec::new();
     let mut multi_index_idents = Vec::new();
@@ -37,10 +39,10 @@ fn impl_mini_table(ast: &syn::DeriveInput) -> syn::Result<TokenStream> {
         let fields = &index.fields;
 
         multi_index_idents.push(fields.iter().collect::<Vec<_>>());
-
-        let index_field = index.index_field();
-        multi_index_fields.push(index_field.clone());
-        multi_index_getters.push(index.getter());
+        multi_index_fields.push((format_ident!("index_{}", index.fields().join("_"))).clone());
+        multi_index_getters.push(format_ident!("get_by_{}", index.fields().join("_")));
+        multi_index_remove.push(format_ident!("remove_by_{}", index.fields().join("_")));
+        multi_index_drain.push(format_ident!("drain_by_{}", index.fields().join("_")));
 
         multi_index_types.push(
             index
@@ -55,8 +57,8 @@ fn impl_mini_table(ast: &syn::DeriveInput) -> syn::Result<TokenStream> {
         })
     }
 
-    let table_type = syn::Ident::new(&format!("{}Table", ident), proc_macro2::Span::call_site());
-    let row_type = syn::Ident::new(&format!("{}Row", ident), proc_macro2::Span::call_site());
+    let table_type = format_ident!("{}Table", ident);
+    let row_type = format_ident!("{}Row", ident);
 
     Ok(quote! {
         #[derive(Clone, Default)]
@@ -74,7 +76,7 @@ fn impl_mini_table(ast: &syn::DeriveInput) -> syn::Result<TokenStream> {
 
             /// Get a reference to an item by its id.
             #[inline]
-            pub fn get(&mut self, id: usize) -> Option<&#ident> {
+            pub fn get(&self, id: usize) -> Option<&#ident> {
                 self.store.get(id).map(|row| &row.item)
             }
 
@@ -84,29 +86,68 @@ fn impl_mini_table(ast: &syn::DeriveInput) -> syn::Result<TokenStream> {
                 pub fn #multi_index_getters(&self, #(#multi_index_idents: #multi_index_types),*) -> impl ::std::iter::ExactSizeIterator<Item = usize> + '_ {
                     struct Iter<'a> {
                         table: &'a #table_type,
-                        next: Option<(u32, u32)>,
+                        count: usize,
+                        next: Option<u32>,
                     }
 
                     impl<'a> ::std::iter::Iterator for Iter<'a> {
                         type Item = usize;
 
                         fn next(&mut self) -> Option<Self::Item> {
-                            let (id, count) = self.next?;
-                            self.next = count.checked_sub(1).map(|count| {
-                                (self.table.store[id as usize].#multi_index_fields[1], count)
-                            });
-                            Some(id as usize)
+                            let id = self.next? as usize;
+                            self.count = self.count.checked_sub(1)?;
+                            self.next = Some(self.table.store[id].#multi_index_fields[1]);
+                            Some(id)
                         }
 
                         fn size_hint(&self) -> (usize, Option<usize>) {
-                            (0, Some(self.next.map(|(_, count)| count as usize + 1).unwrap_or(0)))
+                            (0, Some(self.count))
                         }
                     }
 
                     impl<'a> ::std::iter::ExactSizeIterator for Iter<'a> {}
 
-                    let mut next = self.#multi_index_fields.get(&(#(#multi_index_idents),*)).map(|(id, count)| (*id, *count - 1));
-                    Iter { table: self, next }
+                    match self.#multi_index_fields.get(&(#(#multi_index_idents),*)) {
+                        Some((id, count)) => Iter { table: self, next: Some(*id), count: *count as usize },
+                        None => Iter { table: self, next: None, count: 0 }
+                    }
+                }
+            )*
+
+            #(
+                pub fn #multi_index_drain(&mut self, #(#multi_index_idents: #multi_index_types),*) -> impl ::std::iter::ExactSizeIterator<Item = (usize, #ident)> + '_ {
+                    struct Drain<'a> {
+                        table: &'a mut #table_type,
+                        count: usize,
+                        next: Option<u32>,
+                    }
+
+                    impl<'a> ::std::iter::Iterator for Drain<'a> {
+                        type Item = (usize, #ident);
+
+                        fn next(&mut self) -> Option<Self::Item> {
+                            let id = self.next? as usize;
+                            self.count = self.count.checked_sub(1)?;
+                            self.next = Some(self.table.store[id].#multi_index_fields[1]);
+                            let item = self.table.remove(id).unwrap();
+                            Some((id, item))
+                        }
+
+                        fn size_hint(&self) -> (usize, Option<usize>) {
+                            (0, Some(self.count))
+                        }
+                    }
+
+                    impl<'a> ::std::iter::ExactSizeIterator for Drain<'a> {}
+
+                    match self.#multi_index_fields.get(&(#(#multi_index_idents),*)) {
+                        Some((id, count)) => Drain { next: Some(*id), count: *count as usize, table: self, },
+                        None => Drain { table: self, next: None, count: 0 }
+                    }
+                }
+
+                pub fn #multi_index_remove(&mut self, #(#multi_index_idents: #multi_index_types),*) {
+                    for _ in self.#multi_index_drain(#(#multi_index_idents),*) {}
                 }
             )*
 
@@ -209,6 +250,14 @@ fn impl_mini_table(ast: &syn::DeriveInput) -> syn::Result<TokenStream> {
             }
         }
 
+        impl ::std::ops::Index<usize> for #table_type {
+            type Output = #ident;
+
+            fn index(&self, index: usize) -> &Self::Output {
+                &self.store[index].item
+            }
+        }
+
         #[derive(Clone, Debug)]
         struct #row_type {
             item: #ident,
@@ -229,27 +278,9 @@ struct MiniTableOptions {
 #[derive(FromMeta)]
 struct IndexAttr {
     fields: PathList,
-    #[darling(default)]
-    getter: Option<syn::Ident>,
 }
 
 impl IndexAttr {
-    pub fn getter(&self) -> syn::Ident {
-        self.getter.clone().unwrap_or_else(|| {
-            syn::Ident::new(
-                &format!("get_by_{}", self.fields().join("_")),
-                proc_macro2::Span::call_site(),
-            )
-        })
-    }
-
-    pub fn index_field(&self) -> syn::Ident {
-        syn::Ident::new(
-            &format!("index_{}", self.fields().join("_")),
-            proc_macro2::Span::call_site(),
-        )
-    }
-
     pub fn fields(&self) -> Vec<String> {
         self.fields
             .iter()
