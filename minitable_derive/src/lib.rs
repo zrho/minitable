@@ -188,9 +188,10 @@ fn impl_mini_table(ast: &syn::DeriveInput) -> syn::Result<TokenStream> {
             )*
 
             #(
-                pub fn #unique_index_remove(&mut self, #(#unique_index_idents: #unique_index_types),*) -> Option<#ident> {
+                pub fn #unique_index_remove(&mut self, #(#unique_index_idents: #unique_index_types),*) -> Option<(usize, #ident)> {
                     let id = self.#unique_index_getters(#(#unique_index_idents),*)?;
-                    self.remove(id)
+                    let item = self.remove(id)?;
+                    Some((id, item))
                 }
             )*
 
@@ -328,7 +329,7 @@ fn impl_mini_table(ast: &syn::DeriveInput) -> syn::Result<TokenStream> {
         }
 
         #[derive(Clone, Debug)]
-        struct #row_type {
+        pub struct #row_type {
             item: #ident,
             #(#multi_index_fields: [u32; 2]),*
         }

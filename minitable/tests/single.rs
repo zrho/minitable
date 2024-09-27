@@ -25,7 +25,7 @@ pub fn test_remove() {
     let c = table.insert(Item { value: 0 });
     let d = table.insert(Item { value: 0 });
 
-    assert_eq_sorted!(table.get_by_value(0), [a, d, c]);
+    assert_eq_sorted!(table.get_by_value(0), [a, c, d]);
     table.remove(d);
     assert_eq_sorted!(table.get_by_value(0), [a, c]);
     table.remove(c);
@@ -43,7 +43,7 @@ pub fn test_remove_reinsert() {
     let c = table.insert(Item { value: 0 });
     let d = table.insert(Item { value: 0 });
 
-    assert_eq_sorted!(table.get_by_value(0), [a, d, c]);
+    assert_eq_sorted!(table.get_by_value(0), [a, c, d]);
     let item = table.remove(c).unwrap();
     assert_eq!(table.remove(c), None);
     assert_eq_sorted!(table.get_by_value(0), [a, d]);
