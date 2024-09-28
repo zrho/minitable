@@ -19,7 +19,7 @@
 //!  - Struct fields are cloned when they occur in an index. It is therefore wise to use
 //!    types that are cheap to clone.
 //!  - Concurrent modification and durability are out of scope. Use a real database if you need those.
-//!  - The table uses intrusive cyclic doubly linked list for indices. This allows us to avoid
+//!  - The table uses intrusive cyclic doubly linked list for non-unique indices. This allows us to avoid
 //!    additional allocations beyond the slab and the hash tables for the indices. Moreover this enables
 //!    `O(1)` removal of elements from the index.
 //!  - We currently use the `ahash` crate for hashing. This might become customizable in the future.

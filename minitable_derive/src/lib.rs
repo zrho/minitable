@@ -95,7 +95,7 @@ fn impl_mini_table(ast: &syn::DeriveInput) -> syn::Result<TokenStream> {
         helper_generics.split_for_impl();
 
     Ok(quote! {
-        #[derive(Clone, Default)]
+        #[derive(Clone)]
         pub struct #table_type #ty_generics #where_clause {
             store: ::slab::Slab<#row_type #ty_generics>,
             #(#multi_index_fields: ::ahash::AHashMap<(#(#multi_index_types),*), (u32, u32)>,)*
@@ -106,7 +106,11 @@ fn impl_mini_table(ast: &syn::DeriveInput) -> syn::Result<TokenStream> {
             /// Create a new empty table.
             #[inline]
             pub fn new() -> Self {
-                Self::default()
+                Self {
+                    store: ::slab::Slab::new(),
+                    #(#multi_index_fields: ::ahash::AHashMap::default(),)*
+                    #(#unique_index_fields: ::ahash::AHashMap::default(),)*
+                }
             }
 
             /// Get a reference to an item by its id.
@@ -136,7 +140,7 @@ fn impl_mini_table(ast: &syn::DeriveInput) -> syn::Result<TokenStream> {
                         }
 
                         fn size_hint(&self) -> (usize, Option<usize>) {
-                            (0, Some(self.count))
+                            (self.count, Some(self.count))
                         }
                     }
 
@@ -176,7 +180,7 @@ fn impl_mini_table(ast: &syn::DeriveInput) -> syn::Result<TokenStream> {
                         }
 
                         fn size_hint(&self) -> (usize, Option<usize>) {
-                            (0, Some(self.count))
+                            (self.count, Some(self.count))
                         }
                     }
 
@@ -333,6 +337,12 @@ fn impl_mini_table(ast: &syn::DeriveInput) -> syn::Result<TokenStream> {
 
             fn index(&self, index: usize) -> &Self::Output {
                 &self.store[index].item
+            }
+        }
+
+        impl #impl_generics ::std::default::Default for #table_type #ty_generics #where_clause {
+            fn default() -> Self {
+                Self::new()
             }
         }
 
